@@ -1,0 +1,10 @@
+# Personal Finance Tracker - FastAPI Backend
+# Python 3.13 uyumlu sürümler (önceden derlenmiş wheel kullanır)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+sqlalchemy>=2.0.36
+PyMySQL>=1.1.0
+cryptography>=43.0.0
+passlib[bcrypt]>=1.7.4
