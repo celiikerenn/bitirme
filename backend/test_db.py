@@ -35,7 +35,7 @@ try:
             if table in tables:
                 print(f"   ✅ {table} - VAR")
             else:
-                print(f"   ❌ {table} - YOK (schema.sql çalıştırılmalı)")
+                print(f"   ❌ {table} - YOK (FastAPI'yi çalıştırınca otomatik oluşur)")
 except Exception as e:
     print(f"\n❌ HATA: {type(e).__name__}")
     print(f"   Mesaj: {str(e)}")

@@ -66,7 +66,13 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
-        return UserResponse(id=user.id, name=user.name, email=user.email, role=str(user.role))
+        return UserResponse(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            role=str(user.role),
+            monthly_budget=user.monthly_budget,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -86,4 +92,88 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email).first()
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
+    return UserResponse(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=str(user.role),
+        monthly_budget=user.monthly_budget,
+    )
+
+
+@router.post("/update-budget")
+def update_budget(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Kullanıcının aylık bütçesini günceller.
+    Laravel Profile & Settings sayfasından çağrılır.
+    """
+    user_id = int(payload.get("user_id", 0) or 0)
+    monthly_budget_raw = payload.get("monthly_budget", 0)
+
+    try:
+        monthly_budget = float(monthly_budget_raw or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="monthly_budget must be a number.")
+
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user id.")
+    if monthly_budget < 0:
+        raise HTTPException(status_code=400, detail="monthly_budget cannot be negative.")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    user.monthly_budget = monthly_budget
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": str(user.role),
+        "monthly_budget": float(user.monthly_budget or 0),
+    }
+
+
+@router.post("/change-password")
+def change_password(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Kullanıcının şifresini günceller.
+    Laravel Profile & Settings sayfasındaki Change Password formundan çağrılır.
+    """
+    user_id_raw = payload.get("user_id", 0)
+    current_password = str(payload.get("current_password") or "")
+    new_password = str(payload.get("new_password") or "")
+
+    try:
+        user_id = int(user_id_raw or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user id.")
+    if not current_password or not new_password:
+        raise HTTPException(status_code=400, detail="Both current and new passwords are required.")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if not verify_password(current_password, user.password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+    user.password = hash_password(new_password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
     return UserResponse(id=user.id, name=user.name, email=user.email, role=str(user.role))

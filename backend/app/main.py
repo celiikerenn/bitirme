@@ -7,6 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import expenses, categories, auth
+from app.database import Base, engine, SessionLocal
+import app.models_db  # noqa: F401  (Base metadata'ya modelleri kaydetmek için)
 
 app = FastAPI(
     title="Personal Finance Tracker API",
@@ -26,6 +28,39 @@ app.add_middleware(
 app.include_router(expenses.router, prefix="/api")
 app.include_router(categories.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+
+DEFAULT_CATEGORIES = [
+    "Yemek",
+    "Ulaşım",
+    "Kira",
+    "Faturalar",
+    "Market",
+    "Sağlık",
+    "Eğitim",
+    "Eğlence",
+    "Giyim",
+    "Diğer",
+]
+
+
+@app.on_event("startup")
+def startup_init_db():
+    """
+    Uygulama açılışında MySQL tablolarını oluşturur (yoksa) ve varsayılan kategorileri ekler.
+    Alembic/migration kullanılmayan basit kurulum senaryosu için.
+    """
+    Base.metadata.create_all(bind=engine)
+
+    from app.models_db import ExpenseCategory
+
+    db = SessionLocal()
+    try:
+        existing = db.query(ExpenseCategory).count()
+        if existing == 0:
+            db.add_all([ExpenseCategory(name=name) for name in DEFAULT_CATEGORIES])
+            db.commit()
+    finally:
+        db.close()
 
 
 @app.get("/")

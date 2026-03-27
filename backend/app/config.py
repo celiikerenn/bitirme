@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         default="finance_tracker",
         validation_alias=AliasChoices("MYSQL_DB", "MYSQL_DATABASE"),
     )
+    TESSERACT_CMD: str = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
     @property
     def database_url(self) -> str:

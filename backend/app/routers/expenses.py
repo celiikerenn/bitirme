@@ -4,13 +4,19 @@ Laravel, oturumdaki user_id ile istek atar.
 """
 from datetime import date
 from decimal import Decimal
+import io
+import os
+import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import pytesseract
+from PIL import Image
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, extract
 
 from app.database import get_db
-from app.models_db import Expense, ExpenseCategory
+from app.config import settings
+from app.models_db import Expense, ExpenseCategory, User
 from app.schemas import (
     ExpenseCreate,
     ExpenseUpdate,
@@ -20,6 +26,157 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
+
+
+def _configure_tesseract_path() -> None:
+    """
+    Windows ortamında PATH'e eklenmemiş olsa bile yaygın kurulum yolunu kullan.
+    Opsiyonel olarak TESSERACT_CMD env değişkeni ile ezilebilir.
+    """
+    configured_cmd = settings.TESSERACT_CMD or os.getenv("TESSERACT_CMD")
+    if configured_cmd and os.path.exists(configured_cmd):
+        pytesseract.pytesseract.tesseract_cmd = configured_cmd
+        return
+
+    common_windows_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(common_windows_path):
+        pytesseract.pytesseract.tesseract_cmd = common_windows_path
+
+
+_configure_tesseract_path()
+
+
+def _parse_money_candidates(text: str) -> list[Decimal]:
+    candidates: list[Decimal] = []
+    for raw in re.findall(r"\d+[.,]\d{2}", text):
+        normalized = raw.replace(".", "").replace(",", ".")
+        try:
+            value = Decimal(normalized)
+            if value > 0:
+                candidates.append(value)
+        except Exception:
+            continue
+    return candidates
+
+
+def _extract_receipt_fields(text: str) -> tuple[str, Decimal, date]:
+    cleaned = text.replace("\r", "\n")
+    lines = [ln.strip() for ln in cleaned.split("\n") if ln.strip()]
+    if not lines:
+        raise HTTPException(status_code=400, detail="No readable text found on receipt.")
+
+    store_name = ""
+    preferred_keywords = ("ISPARK", "OTOPARK", "MARKET", "A101", "BIM", "MIGROS", "CARREFOUR")
+    for ln in lines[:12]:
+        normalized = re.sub(r"[^A-Za-z0-9ÇĞİÖŞÜçğıöşü ]+", " ", ln).upper()
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if any(k in normalized for k in preferred_keywords):
+            store_name = normalized.replace("1SPARK", "ISPARK").replace("I SPARK", "ISPARK")[:120]
+            break
+
+    for ln in lines[:8]:
+        if store_name:
+            break
+        if len(ln) < 2:
+            continue
+        digit_count = sum(ch.isdigit() for ch in ln)
+        if digit_count > max(3, len(ln) // 2):
+            continue
+        store_name = re.sub(r"\s+", " ", ln).strip()
+        store_name = store_name.replace("1SPARK", "ISPARK").replace("I SPARK", "ISPARK")[:120]
+        break
+    if not store_name:
+        store_name = "Receipt expense"
+
+    date_value = None
+    date_patterns = [
+        r"\b(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\b",
+        r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\b",
+    ]
+    for pattern in date_patterns:
+        for m in re.finditer(pattern, cleaned):
+            g1, g2, g3 = m.groups()
+            try:
+                if len(g1) == 4:
+                    y, mth, d = int(g1), int(g2), int(g3)
+                else:
+                    d, mth = int(g1), int(g2)
+                    y = int(g3)
+                    if y < 100:
+                        y += 2000
+                candidate = date(y, mth, d)
+                if candidate <= date.today():
+                    date_value = candidate
+                    break
+            except Exception:
+                continue
+        if date_value is not None:
+            break
+    if date_value is None:
+        date_value = date.today()
+
+    # Toplam satırlarını önce dene (TOP/TUTAR/TOTAL/KREDI/NAKIT)
+    amount_value = None
+    total_line_keywords = ("TOP", "TUTAR", "TOTAL", "KREDI", "KREDİ", "NAKIT", "NAKİT")
+    for ln in lines:
+        ln_upper = ln.upper()
+        if any(k in ln_upper for k in total_line_keywords):
+            line_values = _parse_money_candidates(ln)
+            if line_values:
+                amount_value = max(line_values)
+                break
+
+    number_candidates = _parse_money_candidates(cleaned)
+    if not number_candidates:
+        raise HTTPException(status_code=400, detail="Amount could not be detected from receipt.")
+    if amount_value is None:
+        amount_value = max(number_candidates)
+
+    return store_name, amount_value, date_value
+
+
+def _auto_pick_category(db: Session, ocr_text: str) -> ExpenseCategory | None:
+    text_upper = ocr_text.upper()
+
+    keyword_map = [
+        (["ulaşım", "ulasim", "transport", "transportation"], ["OTOPARK", "PARK", "TAXI", "METRO", "BUS", "DOLMUS", "ULAŞIM", "ULASIM", "ISPARK"]),
+        (["market", "grocery"], ["MARKET", "MIGROS", "BIM", "A101", "CARREFOUR", "SOK"]),
+        (["faturalar", "utilities", "bills"], ["FATURA", "ELEKTRIK", "ELEKTRİK", "DOGALGAZ", "SU", "INTERNET"]),
+        (["sağlık", "saglik", "health"], ["ECZANE", "HASTANE", "DOKTOR", "SAGLIK", "SAĞLIK"]),
+        (["eğlence", "eglence", "entertainment"], ["SINEMA", "KONSER", "EGLENCE", "EĞLENCE"]),
+        (["giyim", "clothing"], ["GIYIM", "GİYİM", "AYAKKABI", "MONT", "CEKET"]),
+        (["kira", "rent"], ["KIRA", "KİRA"]),
+    ]
+
+    all_categories = db.query(ExpenseCategory).all()
+
+    def find_category_by_aliases(aliases: list[str]) -> ExpenseCategory | None:
+        for cat in all_categories:
+            cat_name = (cat.name or "").strip().lower()
+            for alias in aliases:
+                if alias in cat_name:
+                    return cat
+        return None
+
+    for aliases, keywords in keyword_map:
+        if any(k in text_upper for k in keywords):
+            matched = find_category_by_aliases(aliases)
+            if matched is not None:
+                return matched
+
+    fallback = (
+        db.query(ExpenseCategory)
+        .filter(func.lower(ExpenseCategory.name).in_(["diğer", "diger", "other"]))
+        .first()
+    )
+    if fallback is None:
+        fallback = db.query(ExpenseCategory).order_by(ExpenseCategory.id.asc()).first()
+    if fallback is None:
+        fallback = ExpenseCategory(name="Diğer")
+        db.add(fallback)
+        db.commit()
+        db.refresh(fallback)
+    return fallback
 
 
 def expense_to_response(exp: Expense) -> ExpenseResponse:
@@ -42,25 +199,101 @@ def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
     Yeni harcama ekler.
     Laravel, giriş yapmış kullanıcının id'sini user_id olarak gönderir.
     """
-    # Kategori var mı kontrol
-    if data.expense_date > date.today():
-        raise HTTPException(status_code=400, detail="Expense date cannot be in the future.")
+    try:
+        # Kategori var mı kontrol
+        if data.expense_date > date.today():
+            raise HTTPException(status_code=400, detail="Expense date cannot be in the future.")
 
-    category = db.query(ExpenseCategory).filter(ExpenseCategory.id == data.category_id).first()
-    if not category:
-        raise HTTPException(status_code=400, detail="Invalid category id.")
+        category = db.query(ExpenseCategory).filter(ExpenseCategory.id == data.category_id).first()
+        if not category:
+            raise HTTPException(status_code=400, detail="Invalid category id.")
+
+        user = db.query(User).filter(User.id == data.user_id).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid user id. Please login/register again.")
+
+        expense = Expense(
+            user_id=data.user_id,
+            category_id=data.category_id,
+            amount=data.amount,
+            description=data.description,
+            expense_date=data.expense_date,
+        )
+        # Response için category ilişkisini hazır tut
+        expense.category = category
+        db.add(expense)
+        db.commit()
+        db.refresh(expense)
+        return expense_to_response(expense)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        err_msg = str(e)
+        if hasattr(e, "orig"):
+            err_msg = str(e.orig)
+        elif hasattr(e, "__cause__") and e.__cause__:
+            err_msg = str(e.__cause__)
+        raise HTTPException(status_code=503, detail=f"Veritabanı hatası: {err_msg}") from e
+
+
+@router.post("/ocr-create", response_model=ExpenseResponse)
+async def create_expense_from_receipt(
+    user_id: int = Form(...),
+    receipt: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Fiş görselinden OCR ile mağaza adı/tutar/tarih çıkarır ve harcama oluşturur.
+    """
+    if not receipt.content_type or not receipt.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are supported.")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid user id. Please login/register again.")
+
+    try:
+        data = await receipt.read()
+        image = Image.open(io.BytesIO(data)).convert("L")
+        # Basit threshold: fiş metnini keskinleştirir.
+        image = image.point(lambda x: 0 if x < 170 else 255, mode="1")
+        try:
+            text = pytesseract.image_to_string(image, lang="tur+eng", config="--psm 6")
+        except Exception:
+            text = pytesseract.image_to_string(image, lang="eng", config="--psm 6")
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Receipt image could not be processed: {str(e)}",
+        ) from e
+
+    store_name, amount_value, date_value = _extract_receipt_fields(text)
+
+    selected_category = _auto_pick_category(db, text)
+    if selected_category is None:
+        selected_category = db.query(ExpenseCategory).order_by(ExpenseCategory.id.asc()).first()
+    if selected_category is None:
+        raise HTTPException(status_code=400, detail="No expense category is available.")
+
     expense = Expense(
-        user_id=data.user_id,
-        category_id=data.category_id,
-        amount=data.amount,
-        description=data.description,
-        expense_date=data.expense_date,
+        user_id=user_id,
+        category_id=selected_category.id,
+        amount=amount_value,
+        description=store_name,
+        expense_date=date_value,
     )
-    # Response için category ilişkisini hazır tut
-    expense.category = category
-    db.add(expense)
-    db.commit()
-    db.refresh(expense)
+    expense.category = selected_category
+
+    try:
+        db.add(expense)
+        db.commit()
+        db.refresh(expense)
+    except Exception as e:
+        db.rollback()
+        err_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        raise HTTPException(status_code=503, detail=f"Veritabanı hatası: {err_msg}") from e
+
     return expense_to_response(expense)
 
 
@@ -85,6 +318,37 @@ def list_expenses_by_user(
     return ExpenseListResponse(
         expenses=[expense_to_response(e) for e in expenses],
         total=total,
+    )
+
+@router.get("/monthly-total", response_model=MonthlyTotalResponse)
+def get_monthly_total(
+    user_id: int = Query(..., description="Kullanıcı id"),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    """
+    Belirtilen ay için kullanıcının toplam harcamasını ve adetini döner.
+    Not: Bu endpoint dinamik /{expense_id} rotasından ÖNCE tanımlanmalıdır.
+    """
+    result = (
+        db.query(
+            func.coalesce(func.sum(Expense.amount), 0).label("total_amount"),
+            func.count(Expense.id).label("expense_count"),
+        )
+        .filter(Expense.user_id == user_id)
+        .filter(extract("year", Expense.expense_date) == year)
+        .filter(extract("month", Expense.expense_date) == month)
+        .first()
+    )
+    total_amount = Decimal(str(result.total_amount)) if result else Decimal("0")
+    count = result.expense_count if result else 0
+    return MonthlyTotalResponse(
+        user_id=user_id,
+        year=year,
+        month=month,
+        total_amount=total_amount,
+        expense_count=count,
     )
 
 @router.get("/{expense_id}", response_model=ExpenseResponse)
@@ -158,34 +422,3 @@ def delete_expense(
     db.delete(exp)
     db.commit()
     return {"status": "ok", "deleted_id": expense_id}
-
-
-@router.get("/monthly-total", response_model=MonthlyTotalResponse)
-def get_monthly_total(
-    user_id: int = Query(..., description="Kullanıcı id"),
-    year: int = Query(..., ge=2000, le=2100),
-    month: int = Query(..., ge=1, le=12),
-    db: Session = Depends(get_db),
-):
-    """
-    Belirtilen ay için kullanıcının toplam harcamasını ve adetini döner.
-    """
-    result = (
-        db.query(
-            func.coalesce(func.sum(Expense.amount), 0).label("total_amount"),
-            func.count(Expense.id).label("expense_count"),
-        )
-        .filter(Expense.user_id == user_id)
-        .filter(extract("year", Expense.expense_date) == year)
-        .filter(extract("month", Expense.expense_date) == month)
-        .first()
-    )
-    total_amount = Decimal(str(result.total_amount)) if result else Decimal("0")
-    count = result.expense_count if result else 0
-    return MonthlyTotalResponse(
-        user_id=user_id,
-        year=year,
-        month=month,
-        total_amount=total_amount,
-        expense_count=count,
-    )

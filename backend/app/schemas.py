@@ -29,6 +29,10 @@ class UserResponse(BaseModel):
     name: str
     email: str
     role: str
+    monthly_budget: Optional[Decimal] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ---------- Expense ----------
