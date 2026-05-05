@@ -63,7 +63,7 @@
 
             <div style="margin-bottom:0.9rem;">
                 @if($monthlyBudget > 0)
-                    <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:#6b7280; margin-bottom:0.25rem;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--muted); margin-bottom:0.25rem;">
                         <span>Budget usage</span>
                         <span class="number-value" id="budget-usage-label">0%</span>
                     </div>
@@ -71,16 +71,16 @@
                         <div class="budget-bar-fill" id="budget-bar-fill" data-target="{{ min(100, max(0, $usagePercent)) }}"></div>
                     </div>
                     @if($usagePercent > 100)
-                        <p style="margin-top:0.45rem; font-size:0.9rem; color:#b91c1c; font-weight:600;">
+                        <p style="margin-top:0.45rem; font-size:0.9rem; color:var(--red); font-weight:600;">
                             You have exceeded your monthly budget!
                         </p>
                     @elseif($usagePercent > 80)
-                        <p style="margin-top:0.45rem; font-size:0.9rem; color:#b45309;">
+                        <p style="margin-top:0.45rem; font-size:0.9rem; color:#86efac;">
                             You have used over 80% of your budget.
                         </p>
                     @endif
                 @else
-                    <p style="margin-top:0.45rem; font-size:0.9rem; color:#6b7280;">
+                    <p style="margin-top:0.45rem; font-size:0.9rem; color:var(--muted);">
                         No monthly budget limit is set.
                     </p>
                 @endif
@@ -99,17 +99,17 @@
         <div style="display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0.75rem;">
             @foreach($recentMonths as $m)
                 <div>
-                    <div style="background:#f9fafb; border-radius:0.9rem; padding:0.6rem 0.75rem; border:1px solid #e5e7eb;">
-                        <div style="font-weight:600; font-size:0.9rem; margin-bottom:0.25rem; color:#111827;">
+                    <div style="background:var(--surface2); border-radius:0.9rem; padding:0.6rem 0.75rem; border:1px solid var(--border);">
+                        <div style="font-weight:600; font-size:0.9rem; margin-bottom:0.25rem; color:var(--txt);">
                             {{ $m['year'] }}-{{ str_pad($m['month'], 2, '0', STR_PAD_LEFT) }}
                         </div>
-                        <div style="font-size:0.85rem; color:#6b7280; margin-bottom:0.15rem;">
+                        <div style="font-size:0.85rem; color:var(--muted); margin-bottom:0.15rem;">
                             Total spent
                         </div>
                         <div class="number-value" style="font-size:22px; font-weight:600; margin-bottom:0.35rem;">
                             {{ number_format($m['total'], 2, ',', '.') }} ₺
                         </div>
-                        <div style="font-size:0.8rem; color:#6b7280;">
+                        <div style="font-size:0.8rem; color:var(--muted);">
                             {{ $m['count'] }} expenses
                         </div>
                     </div>
@@ -167,8 +167,8 @@
     if (fill && label) {
         const target = Math.max(0, Math.min(100, Number(fill.dataset.target || 0)));
         fill.style.background = target > 80
-            ? "linear-gradient(90deg, #f59e0b, #ef4444)"
-            : "linear-gradient(90deg, #2563eb, #3b82f6)";
+            ? "linear-gradient(90deg, #4ade80, #86efac)"
+            : "linear-gradient(90deg, #15803d, #22c55e)";
         requestAnimationFrame(() => { fill.style.width = `${target}%`; });
 
         const start = performance.now();

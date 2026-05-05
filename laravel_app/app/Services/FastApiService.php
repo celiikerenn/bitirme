@@ -49,7 +49,8 @@ class FastApiService
     }
 
     /**
-     * Fiş görselinden OCR ile harcama oluşturur.
+     * Fiş görselinden Tesseract (Python/pytesseract, yerel OCR) ile metin okuyup harcama oluşturur.
+     * Harici yapay zeka API’si kullanılmaz; işlem FastAPI backend üzerindedir.
      *
      * @param int $userId
      * @param string $filePath Uploaded temp file path
@@ -61,7 +62,7 @@ class FastApiService
         string $filePath,
         string $originalName
     ): array {
-        $request = Http::timeout($this->timeout)
+        $request = Http::timeout(120)
             ->attach('receipt', fopen($filePath, 'r'), $originalName);
 
         $payload = [
@@ -237,7 +238,7 @@ class FastApiService
     /**
      * Kategori listesi (dropdown için).
      *
-     * @return array [['id' => 1, 'name' => 'Yemek'], ...]
+     * @return array [['id' => 1, 'name' => 'Food'], ...]
      */
     public function listCategories(): array
     {

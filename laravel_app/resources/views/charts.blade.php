@@ -13,32 +13,35 @@
         background: var(--surface);
         border-radius: 16px;
         border: 1px solid var(--border);
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(37,99,235,0.06);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 8px 28px rgba(34,197,94,0.06);
         padding: 24px;
     }
     .chart-card h2 {
         margin-top: 0;
         font-size: 1.1rem;
         margin-bottom: 0.75rem;
-        color: #1e293b;
+        color: var(--txt);
     }
     .chart-card canvas {
         max-height: 320px;
+    }
+    .chart-empty {
+        margin-top: 0.5rem;
     }
 </style>
 @endpush
 
 @section('content')
 <h1>Analytics</h1>
-<p style="margin-bottom: 0.75rem; color:#64748b;">
+<p style="margin-bottom: 0.75rem; color:var(--muted);">
     View charts and spending insights in one place. Use month selector to update category analytics.
 </p>
 
 @if(!empty($availableMonths))
     <form method="GET" action="{{ route('charts') }}" style="margin-bottom:1rem; display:flex; gap:0.5rem; align-items:center;">
-        <label for="month" style="font-size:0.9rem; color:#374151;">Month:</label>
+        <label for="month" style="font-size:0.9rem; color:var(--txt2);">Month:</label>
         <select id="month" name="month" onchange="this.form.submit()"
-                style="padding:0.3rem 0.5rem; border-radius:8px; border:1px solid #cbd5f5; font-size:0.9rem;">
+                style="padding:0.3rem 0.5rem; border-radius:8px; border:1px solid var(--border2); font-size:0.9rem; background:var(--surface2); color:var(--txt);">
             @foreach($availableMonths as $month)
                 <option value="{{ $month }}" {{ $selectedMonth === $month ? 'selected' : '' }}>
                     {{ $month }}
@@ -85,9 +88,13 @@
     <div class="chart-card">
         <h2>Category Distribution (Pie Chart)</h2>
         @if(count($pieLabels) === 0)
-            <p>No data to display yet. Please add an expense.</p>
+            <div class="empty-state chart-empty" role="status">
+                <div class="empty-state__icon" aria-hidden="true">🥧</div>
+                <p class="empty-state__title">No categories to chart</p>
+                <p class="empty-state__text">Add an expense for this period to see how spending splits by category.</p>
+            </div>
         @else
-            <p style="font-size:0.9rem; color:#6b7280; margin-top:0; margin-bottom:0.5rem;">
+            <p style="font-size:0.9rem; color:var(--muted); margin-top:0; margin-bottom:0.5rem;">
                 Each slice shows the percentage share of total spending per category.
             </p>
             <canvas id="pieChart" height="210"></canvas>
@@ -97,9 +104,13 @@
     <div class="chart-card">
         <h2>Category Comparison (Bar Chart)</h2>
         @if(count($barLabels) === 0)
-            <p>No data to display yet. Please add an expense.</p>
+            <div class="empty-state chart-empty" role="status">
+                <div class="empty-state__icon" aria-hidden="true">📊</div>
+                <p class="empty-state__title">Nothing to compare yet</p>
+                <p class="empty-state__text">Once you log expenses by category, bar totals will appear here.</p>
+            </div>
         @else
-            <p style="font-size:0.9rem; color:#6b7280; margin-top:0; margin-bottom:0.5rem;">
+            <p style="font-size:0.9rem; color:var(--muted); margin-top:0; margin-bottom:0.5rem;">
                 Bars display the total amount (₺) spent in each category across all months.
             </p>
             <canvas id="barChart" height="210"></canvas>
@@ -109,7 +120,11 @@
     <div class="chart-card">
         <h2>Monthly Expense Trend (Line Chart)</h2>
         @if(count($lineLabels) < 2)
-            <p>Trend chart requires at least <strong>2 different months</strong> of data.</p>
+            <div class="empty-state chart-empty" role="status">
+                <div class="empty-state__icon" aria-hidden="true">📈</div>
+                <p class="empty-state__title">Trend needs more history</p>
+                <p class="empty-state__text">The line chart needs expenses in at least <strong>two different months</strong> to show a trend.</p>
+            </div>
         @else
             <canvas id="lineChart" height="210"></canvas>
         @endif
@@ -127,35 +142,25 @@
     const barLabels = @json($barLabels);
     const barData = @json($barData);
 
-    // All Expenses sayfasındaki badge renkleriyle birebir eşleme
+    /* Yüksek kontrast: yeşil–teal–zeytun ekseninde belirgin ayrım (OKLAB benzeri dağılım) */
     const categoryColors = {
-        food: '#2563eb',
-        yemek: '#2563eb',
-        transport: '#10b981',
-        ulasim: '#10b981',
-        'ulaşım': '#10b981',
-        bills: '#f59e0b',
-        fatura: '#f59e0b',
-        groceries: '#16a34a',
-        market: '#16a34a',
-        shopping: '#16a34a',
-        health: '#ef4444',
-        saglik: '#ef4444',
-        'sağlık': '#ef4444',
-        entertainment: '#a855f7',
-        eglence: '#a855f7',
-        'eğlence': '#a855f7',
-        education: '#0284c7',
-        egitim: '#0284c7',
-        'eğitim': '#0284c7',
-        clothing: '#ea580c',
-        giyim: '#ea580c',
-        rent: '#db2777',
-        kira: '#db2777',
-        other: '#64748b',
+        food: '#22c55e',
+        transport: '#14b8a6',
+        utilities: '#a3e635',
+        grocery: '#059669',
+        groceries: '#047857',
+        health: '#84cc16',
+        entertainment: '#0d9488',
+        education: '#2dd4bf',
+        clothing: '#65a30d',
+        rent: '#15803d',
+        other: '#5eead4',
     };
 
-    const fallbackColors = ['#2563eb', '#10b981', '#f59e0b', '#16a34a', '#ef4444', '#a855f7', '#0284c7', '#ea580c', '#64748b', '#db2777'];
+    const fallbackColors = [
+        '#22c55e', '#14b8a6', '#a3e635', '#059669', '#84cc16',
+        '#0d9488', '#65a30d', '#047857', '#2dd4bf', '#166534',
+    ];
 
     function normalizeText(value) {
         return String(value || '')
@@ -175,32 +180,40 @@
         return fallbackColors[index % fallbackColors.length];
     }
 
+    const sliceOutline = '#0a0f0d';
+
     function buildPalette(labels) {
         return labels.map((label, i) => getCategoryColor(label, i));
     }
 
+    function buildBorderArray(len) {
+        return Array.from({ length: len }, () => sliceOutline);
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.borderColor = 'rgba(99,120,255,0.08)';
+        Chart.defaults.color = '#a8d5c3';
+        Chart.defaults.borderColor = 'rgba(74, 222, 128, 0.12)';
         Chart.defaults.font.family = 'DM Sans, sans-serif';
 
         if (pieLabels.length && document.getElementById('pieChart')) {
             const ctxPie = document.getElementById('pieChart').getContext('2d');
             const totalPie = pieData.reduce((sum, v) => sum + Number(v || 0), 0);
+            const pieBg = buildPalette(pieLabels);
             new Chart(ctxPie, {
                 type: 'pie',
                 data: {
                     labels: pieLabels,
                     datasets: [{
                         data: pieData,
-                        backgroundColor: buildPalette(pieLabels),
-                        borderWidth: 2,
-                        borderColor: '#ffffff'
+                        backgroundColor: pieBg,
+                        borderWidth: 3,
+                        borderColor: buildBorderArray(pieLabels.length),
+                        hoverBorderWidth: 3,
                     }]
                 },
                 options: {
                     plugins: {
-                        legend: { position: 'bottom', labels: { color: '#94a3b8' } },
+                        legend: { position: 'bottom', labels: { color: '#a8d5c3' } },
                         tooltip: {
                             callbacks: {
                                 label: function (context) {
@@ -226,9 +239,9 @@
                     datasets: [{
                         label: 'Total Amount (₺)',
                         data: lineData,
-                        borderColor: '#2563eb',
-                        backgroundColor: 'rgba(37,99,235,0.06)',
-                        pointBackgroundColor: '#2563eb',
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.12)',
+                        pointBackgroundColor: '#4ade80',
                         pointRadius: 4,
                         pointHoverRadius: 6,
                         tension: 0.4,
@@ -240,25 +253,25 @@
                         y: {
                             beginAtZero: true,
                             grid: {
-                                color: 'rgba(0,0,0,0.04)'
+                                color: 'rgba(74, 222, 128, 0.08)'
                             },
                             ticks: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         },
                         x: {
                             grid: {
-                                color: 'rgba(0,0,0,0.04)'
+                                color: 'rgba(74, 222, 128, 0.08)'
                             },
                             ticks: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         }
                     },
                     plugins: {
                         legend: {
                             labels: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         }
                     }
@@ -268,6 +281,7 @@
 
         if (barLabels.length && document.getElementById('barChart')) {
             const ctxBar = document.getElementById('barChart').getContext('2d');
+            const barBg = buildPalette(barLabels);
             new Chart(ctxBar, {
                 type: 'bar',
                 data: {
@@ -275,8 +289,9 @@
                     datasets: [{
                         label: 'Total Amount (₺)',
                         data: barData,
-                        backgroundColor: buildPalette(barLabels),
-                        borderWidth: 0,
+                        backgroundColor: barBg,
+                        borderColor: buildBorderArray(barLabels.length),
+                        borderWidth: 2,
                         borderRadius: 6,
                     }]
                 },
@@ -285,25 +300,25 @@
                         y: {
                             beginAtZero: true,
                             grid: {
-                                color: 'rgba(0,0,0,0.04)'
+                                color: 'rgba(74, 222, 128, 0.08)'
                             },
                             ticks: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         },
                         x: {
                             grid: {
-                                color: 'rgba(0,0,0,0.04)'
+                                color: 'rgba(74, 222, 128, 0.08)'
                             },
                             ticks: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         }
                     },
                     plugins: {
                         legend: {
                             labels: {
-                                color: '#94a3b8'
+                                color: '#a8d5c3'
                             }
                         }
                     }

@@ -5,8 +5,8 @@
 @push('styles')
 <style>
     .receipt-upload {
-        border: 1px dashed rgba(37,99,235,0.4);
-        background: rgba(37,99,235,0.05);
+        border: 1px dashed rgba(74, 222, 128, 0.45);
+        background: rgba(34, 197, 94, 0.08);
         border-radius: 12px;
         padding: 20px;
         text-align: center;
@@ -19,32 +19,32 @@
         letter-spacing: 0 !important;
     }
     .receipt-upload:hover {
-        border-color: rgba(37,99,235,0.8);
-        background: rgba(37,99,235,0.1);
+        border-color: rgba(74, 222, 128, 0.85);
+        background: rgba(34, 197, 94, 0.14);
     }
 </style>
 @endpush
 
 @section('content')
 <h1>Add Expense</h1>
-<p style="margin-top:-0.35rem; margin-bottom:1rem; color:#6b7280; font-size:0.9rem;">
+<p style="margin-top:-0.35rem; margin-bottom:1rem; color:var(--muted); font-size:0.9rem;">
     Capture a new spending record with category, amount and date details.
 </p>
 <div class="card" style="margin-bottom:1rem;">
-    <h2 style="margin-top:0; margin-bottom:0.75rem; font-size:1.1rem;">Auto Add From Receipt (OCR)</h2>
+    <h2 style="margin-top:0; margin-bottom:0.75rem; font-size:1.1rem;">Auto-add from receipt (Tesseract OCR)</h2>
     <form method="POST" action="{{ route('expenses.ocr.store') }}" enctype="multipart/form-data">
         @csrf
         <div class="form-group">
             <label for="receipt">Receipt Photo</label>
             <input type="file" id="receipt" name="receipt" accept="image/*" required style="display:none;">
             <label for="receipt" id="receipt-upload-label" class="receipt-upload">Click to upload receipt</label>
-            <div style="font-size:0.82rem; color:#6b7280; margin-top:0.25rem;">
-                Upload a clear receipt image. Store, total amount, date and category are selected automatically.
+            <div style="font-size:0.82rem; color:var(--muted); margin-top:0.25rem;">
+                Upload a clear receipt photo. Text is read on the server with Tesseract (Python); store, amount, date and category are detected automatically.
             </div>
             @error('receipt') <div class="text-danger">{{ $message }}</div> @enderror
         </div>
         <button type="submit" class="btn btn-primary">
-            Parse Receipt And Save
+            Parse receipt and save
         </button>
     </form>
 </div>
@@ -64,7 +64,7 @@
         <div class="form-group">
             <label for="amount">Amount</label>
             <div style="display:flex; align-items:stretch; gap:0.35rem;">
-                <div style="display:flex; align-items:center; justify-content:center; padding:0 0.65rem; background:#e5e7eb; border-radius:8px; border:1px solid #cbd5f5; font-size:0.9rem; color:#111827;">
+                <div style="display:flex; align-items:center; justify-content:center; padding:0 0.65rem; background:var(--surface2); border-radius:8px; border:1px solid var(--border2); font-size:0.9rem; color:var(--txt);">
                     ₺
                 </div>
                 <input

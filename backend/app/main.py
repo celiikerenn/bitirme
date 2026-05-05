@@ -30,17 +30,51 @@ app.include_router(categories.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 
 DEFAULT_CATEGORIES = [
-    "Yemek",
-    "Ulaşım",
-    "Kira",
-    "Faturalar",
-    "Market",
-    "Sağlık",
-    "Eğitim",
-    "Eğlence",
-    "Giyim",
-    "Diğer",
+    "Food",
+    "Transport",
+    "Rent",
+    "Utilities",
+    "Groceries",
+    "Health",
+    "Education",
+    "Entertainment",
+    "Clothing",
+    "Other",
 ]
+
+# Eski Türkçe isimler → İngilizce (tek seferlik taşıma / birleştirme)
+CATEGORY_TR_TO_EN = {
+    "Yemek": "Food",
+    "Ulaşım": "Transport",
+    "Kira": "Rent",
+    "Faturalar": "Utilities",
+    "Market": "Groceries",
+    "Sağlık": "Health",
+    "Eğitim": "Education",
+    "Eğlence": "Entertainment",
+    "Giyim": "Clothing",
+    "Diğer": "Other",
+}
+
+
+def _migrate_category_names_tr_to_en(db) -> None:
+    """Türkçe kategori satırlarını İngilizce adlara taşır; hedef ad zaten varsa harcamalar birleştirilir."""
+    from app.models_db import Expense, ExpenseCategory
+
+    for tr_name, en_name in CATEGORY_TR_TO_EN.items():
+        old_cat = db.query(ExpenseCategory).filter(ExpenseCategory.name == tr_name).first()
+        if old_cat is None:
+            continue
+        en_cat = db.query(ExpenseCategory).filter(ExpenseCategory.name == en_name).first()
+        if en_cat is None:
+            old_cat.name = en_name
+        elif en_cat.id != old_cat.id:
+            db.query(Expense).filter(Expense.category_id == old_cat.id).update(
+                {Expense.category_id: en_cat.id},
+                synchronize_session=False,
+            )
+            db.delete(old_cat)
+    db.commit()
 
 
 @app.on_event("startup")
@@ -51,16 +85,23 @@ def startup_init_db():
     """
     Base.metadata.create_all(bind=engine)
 
-    from app.models_db import ExpenseCategory
-
     db = SessionLocal()
     try:
-        existing = db.query(ExpenseCategory).count()
-        if existing == 0:
-            db.add_all([ExpenseCategory(name=name) for name in DEFAULT_CATEGORIES])
-            db.commit()
+        _migrate_category_names_tr_to_en(db)
+        _ensure_default_categories(db)
     finally:
         db.close()
+
+
+def _ensure_default_categories(db) -> None:
+    """Varsayılan kategori adları eksikse ekler (tablo boşalsa veya yanlışlıkla silinse bile)."""
+    from app.models_db import ExpenseCategory
+
+    for name in DEFAULT_CATEGORIES:
+        exists = db.query(ExpenseCategory).filter(ExpenseCategory.name == name).first()
+        if exists is None:
+            db.add(ExpenseCategory(name=name))
+    db.commit()
 
 
 @app.get("/")

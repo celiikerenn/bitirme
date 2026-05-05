@@ -1,9 +1,9 @@
-@extends('layouts.app')
+@extends('layouts.auth')
 
 @section('title', 'Register')
 
 @section('content')
-<div class="card" style="max-width: 400px; margin: 2rem auto;">
+<div class="card">
     <h1 style="margin-top: 0;">Register</h1>
     <form method="POST" action="{{ route('register') }}">
         @csrf

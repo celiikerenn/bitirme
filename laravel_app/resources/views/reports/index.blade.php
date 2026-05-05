@@ -4,7 +4,7 @@
 
 @section('content')
 <h1>Reports</h1>
-<p style="margin-bottom:1rem; color:#6b7280; font-size:0.9rem;">
+<p style="margin-bottom:1rem; color:var(--muted); font-size:0.9rem;">
     Download your expenses per month as CSV or PDF.
 </p>
 

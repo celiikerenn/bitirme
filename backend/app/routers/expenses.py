@@ -46,6 +46,32 @@ def _configure_tesseract_path() -> None:
 _configure_tesseract_path()
 
 
+def _receipt_image_to_ocr_text(image: Image.Image) -> str:
+    """
+    Fiş görüntüsünden düz metin üretir.
+
+    Tesseract OCR kullanılır (yerel binary); harici yapay zeka / vision API çağrısı yoktur.
+    """
+    try:
+        return pytesseract.image_to_string(image, lang="tur+eng", config="--psm 6")
+    except pytesseract.TesseractNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tesseract OCR bulunamadı. Windows için kurun veya TESSERACT_CMD ile "
+                "tesseract.exe yolunu ayarlayın: https://github.com/UB-Mannheim/tesseract/wiki"
+            ),
+        ) from e
+    except Exception:
+        try:
+            return pytesseract.image_to_string(image, lang="eng", config="--psm 6")
+        except Exception as e2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"OCR başarısız (Tesseract). tur/eng dil paketleri kurulu mu? Hata: {e2}",
+            ) from e2
+
+
 def _parse_money_candidates(text: str) -> list[Decimal]:
     candidates: list[Decimal] = []
     for raw in re.findall(r"\d+[.,]\d{2}", text):
@@ -59,7 +85,89 @@ def _parse_money_candidates(text: str) -> list[Decimal]:
     return candidates
 
 
-def _extract_receipt_fields(text: str) -> tuple[str, Decimal, date]:
+# Fişte işlem tarihini ararken satır ipuçları (Türkçe / İngilizce)
+_DATE_LINE_HINTS = (
+    "TARIH", "TARİH", "TARIHI", "TARİHİ", "DATE", "FIS", "FIŞ", "FİŞ",
+    "ISLEM", "İŞLEM", "SATIS", "SATIŞ", "Z NO", "ZNO", "BELGE", "TUTAR", "TOP",
+    "ODEME", "ÖDEME", "FATURA", "DUZENLENME", "DÜZENLENME", "KASİYER", "KASA",
+)
+
+# Makul geçmiş (yanlış OCR yılı elenir)
+_EARLIEST_RECEIPT_DATE = date(2015, 1, 1)
+
+
+def _try_parse_date_triple(g1: str, g2: str, g3: str) -> date | None:
+    """g1,g2,g3 ya YYYY-MM-DD ya da GG-AA-YYYY (TR) biçimi."""
+    try:
+        if len(g1) == 4:
+            y, mth, d = int(g1), int(g2), int(g3)
+        else:
+            d, mth = int(g1), int(g2)
+            y = int(g3)
+            if y < 100:
+                y += 2000
+        return date(y, mth, d)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _collect_all_dates_from_text(text: str) -> list[date]:
+    """OCR çıktısından olası tüm tarih adayları (Türk fişleri: boşluklu ayırıcı)."""
+    found: list[date] = []
+    patterns = [
+        r"\b(\d{4})[.\s\-/]+(\d{1,2})[.\s\-/]+(\d{1,2})\b",  # 2026-05-05, 2026 / 05 / 05
+        r"\b(\d{1,2})[.\s\-/]+(\d{1,2})[.\s\-/]+(\d{2,4})\b",  # 05.05.2026, 05 / 05 / 26
+    ]
+    for pattern in patterns:
+        for m in re.finditer(pattern, text):
+            cand = _try_parse_date_triple(*m.groups())
+            if cand is not None:
+                found.append(cand)
+    return found
+
+
+def _date_hint_score(d: date, lines: list[str]) -> int:
+    """Tarih, fiş üzerinde 'tarih/işlem' satırında geçiyorsa yüksek skor."""
+    day_s = str(d.day)
+    month_s = str(d.month)
+    year_s = str(d.year)
+    yshort = str(d.year % 100)
+    best = 0
+    for ln in lines:
+        lu = ln.upper().replace("İ", "I").replace("Ş", "S")
+        if year_s not in ln and yshort not in ln:
+            continue
+        # Ay/gün yaklaşık eşleşmesi (OCR kayması için gevşek)
+        if day_s not in ln and month_s not in ln:
+            continue
+        for hint in _DATE_LINE_HINTS:
+            if hint in lu or hint.replace("İ", "I") in lu:
+                best = max(best, 3)
+                break
+        best = max(best, 1)
+    return best
+
+
+def _select_receipt_date(valid_dates: list[date], lines: list[str]) -> date:
+    """
+    İşlem tarihi: genelde fişteki en güncel (<= bugün) tarih veya tarih anahtar kelimeli satırdaki tarih.
+    """
+    today_d = date.today()
+    uniq = sorted(set(valid_dates))
+    uniq = [d for d in uniq if _EARLIEST_RECEIPT_DATE <= d <= today_d]
+    if not uniq:
+        return today_d
+    scored = [( _date_hint_score(d, lines), d) for d in uniq]
+    scored.sort(key=lambda x: (-x[0], -x[1].toordinal()))
+    return scored[0][1]
+
+
+def _extract_receipt_fields(
+    text: str,
+    *,
+    extra_date_text: str | None = None,
+    extra_date_lines: list[str] | None = None,
+) -> tuple[str, Decimal, date]:
     cleaned = text.replace("\r", "\n")
     lines = [ln.strip() for ln in cleaned.split("\n") if ln.strip()]
     if not lines:
@@ -88,32 +196,14 @@ def _extract_receipt_fields(text: str) -> tuple[str, Decimal, date]:
     if not store_name:
         store_name = "Receipt expense"
 
-    date_value = None
-    date_patterns = [
-        r"\b(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\b",
-        r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\b",
-    ]
-    for pattern in date_patterns:
-        for m in re.finditer(pattern, cleaned):
-            g1, g2, g3 = m.groups()
-            try:
-                if len(g1) == 4:
-                    y, mth, d = int(g1), int(g2), int(g3)
-                else:
-                    d, mth = int(g1), int(g2)
-                    y = int(g3)
-                    if y < 100:
-                        y += 2000
-                candidate = date(y, mth, d)
-                if candidate <= date.today():
-                    date_value = candidate
-                    break
-            except Exception:
-                continue
-        if date_value is not None:
-            break
-    if date_value is None:
-        date_value = date.today()
+    date_blob = cleaned
+    date_lines = list(lines)
+    if extra_date_text:
+        date_blob = cleaned + "\n" + extra_date_text.replace("\r", "\n")
+    if extra_date_lines:
+        date_lines.extend(extra_date_lines)
+    raw_dates = _collect_all_dates_from_text(date_blob)
+    date_value = _select_receipt_date(raw_dates, date_lines)
 
     # Toplam satırlarını önce dene (TOP/TUTAR/TOTAL/KREDI/NAKIT)
     amount_value = None
@@ -138,14 +228,17 @@ def _extract_receipt_fields(text: str) -> tuple[str, Decimal, date]:
 def _auto_pick_category(db: Session, ocr_text: str) -> ExpenseCategory | None:
     text_upper = ocr_text.upper()
 
+    # Kategori adları İngilizce (Food, Transport, …); fiş üzerindeki kelimeler TR/EN karışık olabilir.
     keyword_map = [
-        (["ulaşım", "ulasim", "transport", "transportation"], ["OTOPARK", "PARK", "TAXI", "METRO", "BUS", "DOLMUS", "ULAŞIM", "ULASIM", "ISPARK"]),
-        (["market", "grocery"], ["MARKET", "MIGROS", "BIM", "A101", "CARREFOUR", "SOK"]),
-        (["faturalar", "utilities", "bills"], ["FATURA", "ELEKTRIK", "ELEKTRİK", "DOGALGAZ", "SU", "INTERNET"]),
-        (["sağlık", "saglik", "health"], ["ECZANE", "HASTANE", "DOKTOR", "SAGLIK", "SAĞLIK"]),
-        (["eğlence", "eglence", "entertainment"], ["SINEMA", "KONSER", "EGLENCE", "EĞLENCE"]),
-        (["giyim", "clothing"], ["GIYIM", "GİYİM", "AYAKKABI", "MONT", "CEKET"]),
-        (["kira", "rent"], ["KIRA", "KİRA"]),
+        (["transport"], ["OTOPARK", "PARK", "TAXI", "METRO", "BUS", "DOLMUS", "ULAŞIM", "ULASIM", "ISPARK"]),
+        (["grocer", "grocery"], ["MARKET", "MIGROS", "BIM", "A101", "CARREFOUR", "SOK"]),
+        (["utilities", "utility"], ["FATURA", "ELEKTRIK", "ELEKTRİK", "DOGALGAZ", "SU", "INTERNET"]),
+        (["health"], ["ECZANE", "HASTANE", "DOKTOR", "SAGLIK", "SAĞLIK"]),
+        (["entertainment"], ["SINEMA", "KONSER", "EGLENCE", "EĞLENCE"]),
+        (["clothing"], ["GIYIM", "GİYİM", "AYAKKABI", "MONT", "CEKET"]),
+        (["rent"], ["KIRA", "KİRA"]),
+        (["food"], ["RESTORAN", "RESTAURANT", "CAFE", "CAFÉ", "KEBAP", "YEMEK"]),
+        (["education"], ["OKUL", "UNIVERSITY", "ÜNIVERSİTE", "KURS"]),
     ]
 
     all_categories = db.query(ExpenseCategory).all()
@@ -166,13 +259,13 @@ def _auto_pick_category(db: Session, ocr_text: str) -> ExpenseCategory | None:
 
     fallback = (
         db.query(ExpenseCategory)
-        .filter(func.lower(ExpenseCategory.name).in_(["diğer", "diger", "other"]))
+        .filter(func.lower(ExpenseCategory.name).in_(["other", "diğer", "diger"]))
         .first()
     )
     if fallback is None:
         fallback = db.query(ExpenseCategory).order_by(ExpenseCategory.id.asc()).first()
     if fallback is None:
-        fallback = ExpenseCategory(name="Diğer")
+        fallback = ExpenseCategory(name="Other")
         db.add(fallback)
         db.commit()
         db.refresh(fallback)
@@ -244,7 +337,8 @@ async def create_expense_from_receipt(
     db: Session = Depends(get_db),
 ):
     """
-    Fiş görselinden OCR ile mağaza adı/tutar/tarih çıkarır ve harcama oluşturur.
+    Fiş görselinden Tesseract (pytesseract) ile OCR yapar; mağaza adı/tutar/tarih çıkarıp harcama oluşturur.
+    Harici AI / bulut vision servisi kullanılmaz.
     """
     if not receipt.content_type or not receipt.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image files are supported.")
@@ -254,21 +348,43 @@ async def create_expense_from_receipt(
         raise HTTPException(status_code=400, detail="Invalid user id. Please login/register again.")
 
     try:
-        data = await receipt.read()
-        image = Image.open(io.BytesIO(data)).convert("L")
+        raw = await receipt.read()
+        image = Image.open(io.BytesIO(raw)).convert("L")
+        # Çok büyük görsellerde OCR için boyut sınırla (Tesseract / bellek)
+        max_side = 2000
+        w, h = image.size
+        if max(w, h) > max_side:
+            ratio = max_side / float(max(w, h))
+            image = image.resize(
+                (max(1, int(w * ratio)), max(1, int(h * ratio))),
+                Image.Resampling.LANCZOS,
+            )
         # Basit threshold: fiş metnini keskinleştirir.
         image = image.point(lambda x: 0 if x < 170 else 255, mode="1")
-        try:
-            text = pytesseract.image_to_string(image, lang="tur+eng", config="--psm 6")
-        except Exception:
-            text = pytesseract.image_to_string(image, lang="eng", config="--psm 6")
+        text = _receipt_image_to_ocr_text(image)
+        cleaned_primary = text.replace("\r", "\n")
+        extra_date_text: str | None = None
+        extra_date_lines: list[str] | None = None
+        if not _collect_all_dates_from_text(cleaned_primary):
+            try:
+                extra_date_text = pytesseract.image_to_string(image, lang="tur+eng", config="--psm 4")
+            except Exception:
+                extra_date_text = pytesseract.image_to_string(image, lang="eng", config="--psm 4")
+            ex = extra_date_text.replace("\r", "\n")
+            extra_date_lines = [ln.strip() for ln in ex.split("\n") if ln.strip()]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
             detail=f"Receipt image could not be processed: {str(e)}",
         ) from e
 
-    store_name, amount_value, date_value = _extract_receipt_fields(text)
+    store_name, amount_value, date_value = _extract_receipt_fields(
+        text,
+        extra_date_text=extra_date_text,
+        extra_date_lines=extra_date_lines,
+    )
 
     selected_category = _auto_pick_category(db, text)
     if selected_category is None:

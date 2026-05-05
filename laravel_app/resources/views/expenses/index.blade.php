@@ -8,8 +8,20 @@
         background: var(--surface);
         border-radius: 16px;
         border: 1px solid var(--border);
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(37,99,235,0.06);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 8px 28px rgba(34,197,94,0.06);
         overflow: hidden;
+    }
+    .expenses-table col.col-id { width: 4.5rem; }
+    .expenses-table col.col-date { width: 7rem; }
+    .expenses-table col.col-cat { width: 9rem; }
+    .expenses-table col.col-desc { min-width: 10rem; }
+    .expenses-table col.col-amount { width: 8rem; }
+    .expenses-table col.col-created { width: 9.5rem; }
+    .expenses-table col.col-actions { width: 11rem; }
+    .expenses-table .cell-id {
+        font-family: 'DM Mono', monospace;
+        font-size: 12px;
+        color: var(--muted);
     }
     .expenses-table thead { background: var(--surface2); border-bottom: 1px solid var(--border2); }
     .expenses-table th {
@@ -20,11 +32,11 @@
         text-transform: uppercase;
         letter-spacing: 0.08em;
     }
-    .expenses-table tbody tr,
-    .expenses-table tbody tr:hover,
-    .expenses-table tbody tr:active,
-    .expenses-table tbody tr:focus {
-        background: transparent !important;
+    .expenses-table tbody tr {
+        transition: background-color 0.14s ease;
+    }
+    .expenses-table tbody tr:hover {
+        background: rgba(34, 197, 94, 0.08);
     }
     .expenses-table td {
         padding: 14px 16px;
@@ -51,11 +63,11 @@
         transform: none !important;
     }
     .expense-actions .btn-secondary {
-        background: #eff6ff;
-        color: #2563eb;
-        border: 1px solid rgba(37,99,235,0.2);
+        background: rgba(34, 197, 94, 0.12);
+        color: #86efac;
+        border: 1px solid rgba(74, 222, 128, 0.28);
     }
-    .expense-actions .btn-secondary:hover { background: #dbeafe; }
+    .expense-actions .btn-secondary:hover { background: rgba(34, 197, 94, 0.2); }
     .expense-actions .btn-delete-trigger,
     .expense-actions .delete-confirm {
         background: #fef2f2;
@@ -64,9 +76,69 @@
     }
     .expense-actions .btn-delete-trigger:hover,
     .expense-actions .delete-confirm:hover { background: #fee2e2; }
-    .delete-confirm-ui { display:none; gap:6px; }
-    .delete-confirm-ui.show { display:inline-flex; }
     .row-deleting { opacity:0; transform: translateY(-6px); transition: opacity 0.2s ease, transform 0.2s ease; }
+
+    .expense-delete-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 400;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+    .expense-delete-modal.is-open {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+    }
+    .expense-delete-modal__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.72);
+        backdrop-filter: blur(4px);
+    }
+    .expense-delete-modal__panel {
+        position: relative;
+        max-width: 400px;
+        width: 100%;
+        background: var(--surface);
+        border: 1px solid var(--border2);
+        border-radius: 16px;
+        padding: 1.35rem 1.5rem 1.25rem;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+    }
+    .expense-delete-modal__panel h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--txt);
+    }
+    .expense-delete-modal__detail {
+        margin: 0 0 1.15rem;
+        font-size: 0.9rem;
+        color: var(--txt2);
+        line-height: 1.45;
+    }
+    .expense-delete-modal__actions {
+        display: flex;
+        gap: 0.6rem;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+    .expense-delete-modal__actions .btn { min-width: 5.5rem; }
+    .expense-delete-modal__actions .delete-confirm {
+        background: rgba(248, 113, 113, 0.12);
+        color: #fca5a5;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+    }
+    .expense-delete-modal__actions .delete-confirm:hover {
+        background: rgba(248, 113, 113, 0.2);
+    }
 </style>
 @endpush
 
@@ -78,7 +150,7 @@
 
 <div class="card" style="padding:1rem; margin-bottom:1rem;">
     <form method="GET" action="{{ route('expenses.index') }}" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-        <label for="month" style="font-size:0.9rem; color:#374151;">Month:</label>
+        <label for="month" style="font-size:0.9rem; color:var(--txt2);">Month:</label>
         <select id="month" name="month" onchange="this.form.submit()"
                 style="padding:0.3rem 0.5rem; border-radius:8px; font-size:0.9rem;">
             @if(!empty($months ?? []))
@@ -97,14 +169,24 @@
 <div class="card expenses-table-wrap">
     @if(count($expenses) > 0)
         <table class="expenses-table">
+            <colgroup>
+                <col class="col-id">
+                <col class="col-date">
+                <col class="col-cat">
+                <col class="col-desc">
+                <col class="col-amount">
+                <col class="col-created">
+                <col class="col-actions">
+            </colgroup>
             <thead>
                 <tr>
-                    <th style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Date</th>
-                    <th style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Category</th>
-                    <th style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Description</th>
-                    <th class="text-right" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Amount</th>
-                    <th style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Created</th>
-                    <th style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Actions</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">ID</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Date</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Category</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Description</th>
+                    <th scope="col" class="text-right" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Amount</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Created</th>
+                    <th scope="col" style="text-transform:uppercase; letter-spacing:0.06em; font-size:0.75rem;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -112,19 +194,20 @@
                     @php
                         $cat = strtolower($e['category_name'] ?? 'other');
                         $badgeClass = 'badge-other';
-                        if (str_contains($cat, 'food') || str_contains($cat, 'yemek')) $badgeClass = 'badge-food';
-                        elseif (str_contains($cat, 'transport') || str_contains($cat, 'ulaşım') || str_contains($cat, 'ulasim')) $badgeClass = 'badge-transport';
-                        elseif (str_contains($cat, 'bill') || str_contains($cat, 'fatura')) $badgeClass = 'badge-bills';
-                        elseif (str_contains($cat, 'shop') || str_contains($cat, 'market') || str_contains($cat, 'giyim')) $badgeClass = 'badge-shopping';
-                        elseif (str_contains($cat, 'health') || str_contains($cat, 'sağlık') || str_contains($cat, 'saglik')) $badgeClass = 'badge-health';
-                        elseif (str_contains($cat, 'entertainment') || str_contains($cat, 'eğlence') || str_contains($cat, 'eglence')) $badgeClass = 'badge-entertainment';
-                        elseif (str_contains($cat, 'education') || str_contains($cat, 'egitim') || str_contains($cat, 'eğitim')) $badgeClass = 'badge-education';
+                        if (str_contains($cat, 'food')) $badgeClass = 'badge-food';
+                        elseif (str_contains($cat, 'transport')) $badgeClass = 'badge-transport';
+                        elseif (str_contains($cat, 'utilities') || str_contains($cat, 'utility') || str_contains($cat, 'bill')) $badgeClass = 'badge-bills';
+                        elseif (str_contains($cat, 'grocery') || str_contains($cat, 'groceries')) $badgeClass = 'badge-shopping';
+                        elseif (str_contains($cat, 'health')) $badgeClass = 'badge-health';
+                        elseif (str_contains($cat, 'entertainment')) $badgeClass = 'badge-entertainment';
+                        elseif (str_contains($cat, 'education')) $badgeClass = 'badge-education';
                         elseif (str_contains($cat, 'clothing')) $badgeClass = 'badge-clothing';
-                        elseif (str_contains($cat, 'rent') || str_contains($cat, 'kira')) $badgeClass = 'badge-rent';
+                        elseif (str_contains($cat, 'rent')) $badgeClass = 'badge-rent';
                     @endphp
                     <tr class="expense-row"
                         data-category="{{ strtolower($e['category_name'] ?? '') }}"
-                        data-search="{{ strtolower(($e['description'] ?? '') . ' ' . ($e['category_name'] ?? '') . ' ' . number_format($e['amount'], 2, ',', '.') . ' ' . number_format($e['amount'], 2, '.', '') . ' ' . \Carbon\Carbon::parse($e['expense_date'])->format('d.m.Y') . ' ' . \Carbon\Carbon::parse($e['expense_date'])->format('Y-m-d') . ' ' . \Carbon\Carbon::parse($e['created_at'])->format('d.m.Y H:i')) }}">
+                        data-search="{{ strtolower(($e['description'] ?? '') . ' ' . ($e['category_name'] ?? '') . ' ' . ($e['id'] ?? '') . ' ' . number_format($e['amount'], 2, ',', '.') . ' ' . number_format($e['amount'], 2, '.', '') . ' ' . \Carbon\Carbon::parse($e['expense_date'])->format('d.m.Y') . ' ' . \Carbon\Carbon::parse($e['expense_date'])->format('Y-m-d') . ' ' . \Carbon\Carbon::parse($e['created_at'])->format('d.m.Y H:i')) }}">
+                        <td class="cell-id">#{{ $e['id'] }}</td>
                         <td class="date-cell">{{ \Carbon\Carbon::parse($e['expense_date'])->format('d.m.Y') }}</td>
                         <td>
                             <span class="badge-category {{ $badgeClass }}">
@@ -139,11 +222,11 @@
                         <td>
                             <div class="expense-actions">
                                 <a class="btn btn-secondary" href="{{ route('expenses.edit', $e['id']) }}">Edit</a>
-                                <button type="button" class="btn btn-secondary btn-delete-trigger">Delete</button>
-                                <span class="delete-confirm-ui">
-                                    <button type="button" class="btn delete-confirm">Confirm</button>
-                                    <button type="button" class="btn delete-cancel">Cancel</button>
-                                </span>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary btn-delete-trigger"
+                                    data-expense-line="{{ e(\Illuminate\Support\Str::limit($e['description'] ?? '—', 80)) }} · {{ number_format($e['amount'], 2, ',', '.') }} ₺"
+                                >Delete</button>
                                 <form method="POST" action="{{ route('expenses.destroy', $e['id']) }}" style="display:none;" class="delete-form">
                                     @csrf
                                     @method('DELETE')
@@ -205,42 +288,89 @@
             </nav>
         @endif
     @else
-        <p>No expenses yet. <a href="{{ route('expenses.create') }}">Add your first expense</a>.</p>
+        <div class="empty-state empty-state--wide" role="status">
+            <div class="empty-state__icon" aria-hidden="true">📋</div>
+            <p class="empty-state__title">No expenses yet</p>
+            <p class="empty-state__text">
+                Start tracking by adding a manual entry or upload a receipt on the add expense page.
+            </p>
+            <p style="margin:1rem 0 0;">
+                <a href="{{ route('expenses.create') }}" class="btn btn-primary">Add your first expense</a>
+            </p>
+        </div>
     @endif
+</div>
+
+<div id="expense-delete-modal" class="expense-delete-modal" aria-hidden="true" role="dialog" aria-labelledby="expense-delete-title">
+    <div class="expense-delete-modal__backdrop" data-delete-modal-close></div>
+    <div class="expense-delete-modal__panel">
+        <h3 id="expense-delete-title">Delete this expense?</h3>
+        <p class="expense-delete-modal__detail" id="expense-delete-modal-detail"></p>
+        <div class="expense-delete-modal__actions">
+            <button type="button" class="btn btn-secondary" id="expense-delete-modal-cancel">Cancel</button>
+            <button type="button" class="btn delete-confirm" id="expense-delete-modal-confirm">Delete</button>
+        </div>
+    </div>
 </div>
 @endsection
 
 @push('scripts')
 <script>
 (() => {
-    const rows = Array.from(document.querySelectorAll(".expense-row"));
+    const modal = document.getElementById("expense-delete-modal");
+    const detailEl = document.getElementById("expense-delete-modal-detail");
+    const btnCancel = document.getElementById("expense-delete-modal-cancel");
+    const btnConfirm = document.getElementById("expense-delete-modal-confirm");
+    if (!modal || !detailEl || !btnCancel || !btnConfirm) return;
 
-    let currentConfirmRow = null;
-    rows.forEach((row) => {
+    let pendingForm = null;
+    let pendingRow = null;
+
+    function openModal(line, form, row) {
+        pendingForm = form;
+        pendingRow = row;
+        detailEl.textContent = line || "";
+        modal.classList.add("is-open");
+        modal.setAttribute("aria-hidden", "false");
+        btnConfirm.focus();
+    }
+
+    function closeModal() {
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+        pendingForm = null;
+        pendingRow = null;
+    }
+
+    document.querySelectorAll(".expense-row").forEach((row) => {
         const trigger = row.querySelector(".btn-delete-trigger");
-        const confirmWrap = row.querySelector(".delete-confirm-ui");
-        const confirmBtn = row.querySelector(".delete-confirm");
-        const cancelBtn = row.querySelector(".delete-cancel");
         const form = row.querySelector(".delete-form");
-        if (!trigger || !confirmWrap || !confirmBtn || !cancelBtn || !form) return;
-
+        if (!trigger || !form) return;
         trigger.addEventListener("click", () => {
-            if (currentConfirmRow && currentConfirmRow !== row) {
-                currentConfirmRow.querySelector(".delete-confirm-ui")?.classList.remove("show");
-            }
-            confirmWrap.classList.add("show");
-            currentConfirmRow = row;
+            const line = trigger.getAttribute("data-expense-line") || "";
+            openModal(line, form, row);
         });
+    });
 
-        cancelBtn.addEventListener("click", () => {
-            confirmWrap.classList.remove("show");
-            if (currentConfirmRow === row) currentConfirmRow = null;
-        });
+    btnCancel.addEventListener("click", closeModal);
+    modal.querySelectorAll("[data-delete-modal-close]").forEach((el) => {
+        el.addEventListener("click", closeModal);
+    });
 
-        confirmBtn.addEventListener("click", () => {
-            row.classList.add("row-deleting");
-            setTimeout(() => form.submit(), 220);
-        });
+    btnConfirm.addEventListener("click", () => {
+        if (!pendingForm || !pendingRow) return;
+        const formToSend = pendingForm;
+        const rowEl = pendingRow;
+        rowEl.classList.add("row-deleting");
+        closeModal();
+        setTimeout(() => formToSend.submit(), 220);
+    });
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal.classList.contains("is-open")) {
+            e.preventDefault();
+            closeModal();
+        }
     });
 })();
 </script>
